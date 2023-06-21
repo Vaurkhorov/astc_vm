@@ -29,6 +29,7 @@ enum Opcode {
     Invert,
     Skip,
     StoreAtMemoryIndex(usize),
+    FetchFromMemoryIndex(usize),
     Unsupported(u8),
 }
 
@@ -77,7 +78,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 
         '_expression_read: for instruction in input_stack {
 
-            match match_instruction(instruction, &mut operand_stack, &mut top) {
+            match match_instruction(instruction, &mut operand_stack, &mut top, &mut memory_stack) {
                 NextInstructionStep::Continue => continue,
                 NextInstructionStep::EndExecution => break 'bytecode_read,
                 NextInstructionStep::FlushAnswerAndProceed => {
@@ -142,7 +143,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 }
 
 // in the execution loop
-fn match_instruction(instruction: Instruction, operand_stack: &mut [i16; BUFFER_LENGTH], top: &mut usize) -> NextInstructionStep {
+fn match_instruction(instruction: Instruction, operand_stack: &mut [i16; BUFFER_LENGTH], top: &mut usize, memory_stack: &mut [i16; MEMORY_STACK_LENGTH]) -> NextInstructionStep {
     match instruction {
                 Instruction::End => {
                     println!("Execution stopped, no 'End' or 'Flush' encountered.");
@@ -154,7 +155,7 @@ fn match_instruction(instruction: Instruction, operand_stack: &mut [i16; BUFFER_
                     NextInstructionStep::Continue
                 },
                 Instruction::Opcode(t) => {
-                    match operate(t, operand_stack, top) {
+                    match operate(t, operand_stack, top, memory_stack) {
                         Ok(t) => t,
                         Err(e) => {
                             println!("{:?}", e);
@@ -226,17 +227,25 @@ fn read_intructions(bytecode_path: &str, file_pointer: &mut usize) -> Result<[In
                     buffer_index += 2;
                     *file_pointer += 1;
                     let decoded_num = LittleEndian::read_i16(&num);
-                    println!("{:?}", decoded_num);
+                    println!("Operand: {:?}", decoded_num);
                     Instruction::Number(decoded_num)
-                }
+                },
                 b'M' => {
                     let num = [buffer[buffer_index+1], buffer[buffer_index+2]];
                     buffer_index += 2;
                     *file_pointer += 1;
                     let decoded_index = LittleEndian::read_i16(&num);
-                    println!("{:?}", decoded_index);
+                    println!("Storing at memory: #{:?}", decoded_index);
                     Instruction::Opcode(Opcode::StoreAtMemoryIndex(decoded_index as usize % MEMORY_STACK_LENGTH))
-                }
+                },
+                b'F' => {
+                    let num = [buffer[buffer_index+1], buffer[buffer_index+2]];
+                    buffer_index += 2;
+                    *file_pointer += 1;
+                    let decoded_index = LittleEndian::read_i16(&num);
+                    println!("Fetching from memory: #{:?}", decoded_index);
+                    Instruction::Opcode(Opcode::FetchFromMemoryIndex(decoded_index as usize % MEMORY_STACK_LENGTH))
+                },
                 t => Instruction::Opcode(Opcode::Unsupported(t)),
             }
         }
@@ -250,7 +259,7 @@ fn read_intructions(bytecode_path: &str, file_pointer: &mut usize) -> Result<[In
 
 }
 
-fn operate(opcode: Opcode, operand_stack: &mut [i16; BUFFER_LENGTH], top: &mut usize) -> Result<NextInstructionStep, String>{
+fn operate(opcode: Opcode, operand_stack: &mut [i16; BUFFER_LENGTH], top: &mut usize, memory_stack: &mut [i16; MEMORY_STACK_LENGTH]) -> Result<NextInstructionStep, String>{
     match opcode {
         Opcode::_Begin => Err("This should never be called, it just exists for clarity.".to_owned()),
 
@@ -302,5 +311,10 @@ fn operate(opcode: Opcode, operand_stack: &mut [i16; BUFFER_LENGTH], top: &mut u
         Opcode::Unsupported(t) => Err(format!("Unrecognised Opcode: {}", t).to_owned()),
 
         Opcode::StoreAtMemoryIndex(index) => Ok(NextInstructionStep::StoreAnswerAndProceed(index)),
+
+        Opcode::FetchFromMemoryIndex(index) => {
+            operand_stack[*top] = memory_stack[index];
+            Ok(NextInstructionStep::Continue)
+        },
     }
 }
